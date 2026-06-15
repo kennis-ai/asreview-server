@@ -1,0 +1,114 @@
+# .github/workflows/build.yml
+#
+# Builds and publishes ghcr.io/kennis-ai/asreview-server on GitHub's amd64 runner
+# (native — same arch as the kennis-pve cluster, no qemu). The sanity check runs
+# against the BUILT image before any push: it confirms the three subcommands the
+# deployment relies on (auth-tool, task-manager, the webapp factory) exist, that
+# the installed version matches the pin, and that the runtime uid is 1000. A push
+# only happens if that passes.
+#
+# Because this repo is PUBLIC and the image carries org.opencontainers.image.source
+# pointing here, the published package can be made public (GitHub → Packages →
+# asreview-server → Package settings → Change visibility → Public — one-time).
+name: build
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "ASReview version to build/pin"
+        required: true
+        default: "2.1.1"
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - .github/workflows/build.yml
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/asreview-server
+  ASREVIEW_VERSION: ${{ github.event.inputs.version || '2.1.1' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Defense-in-depth: version comes from a workflow_dispatch input
+      # (write-access users only) and is consumed via $ASREVIEW_VERSION in run
+      # steps — never raw ${{ }}. Reject anything that isn't strict semver before
+      # it becomes a docker tag / build-arg.
+      - name: Validate version input
+        run: |
+          set -euo pipefail
+          echo "version: ${ASREVIEW_VERSION}"
+          [[ "${ASREVIEW_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::ASREVIEW_VERSION '${ASREVIEW_VERSION}' is not strict semver (X.Y.Z)"
+            exit 1
+          }
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image (load, no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: |
+            ASREVIEW_VERSION=${{ env.ASREVIEW_VERSION }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:${{ env.ASREVIEW_VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Sanity check the built image
+        run: |
+          set -euxo pipefail
+          IMG="${IMAGE}:${ASREVIEW_VERSION}"
+
+          # 1. The webapp factory + the two CLI subcommands the deployment runs.
+          docker run --rm "$IMG" bash -c '
+            set -e
+            asreview auth-tool --help    >/dev/null
+            asreview task-manager --help >/dev/null
+            python -c "from asreview.webapp.app import create_app; print(\"create_app OK\")"
+          '
+
+          # 2. Installed version must match the pin exactly. importlib.metadata is
+          #    authoritative (asreview.__version__ is empty in 2.1.1's packaging).
+          GOT="$(docker run --rm "$IMG" python -c 'import importlib.metadata as m; print(m.version("asreview"))')"
+          echo "installed asreview version: $GOT (expected ${ASREVIEW_VERSION})"
+          test "$GOT" = "${ASREVIEW_VERSION}"
+
+          # 3. Runs as non-root uid 1000 (PSA restricted on the cluster).
+          UID_GOT="$(docker run --rm "$IMG" id -u)"
+          echo "runtime uid: $UID_GOT (expected 1000)"
+          test "$UID_GOT" = "1000"
+
+      - name: Push image
+        run: docker push "${IMAGE}:${ASREVIEW_VERSION}"
+
+      - name: Summary
+        run: |
+          {
+            echo "### ASReview image published"
+            echo ""
+            echo "- Image: \`${IMAGE}:${ASREVIEW_VERSION}\`"
+            echo "- Sanity check: passed (subcommands + version ${ASREVIEW_VERSION} + uid 1000)"
+            echo ""
+            echo "> First publish: make the package **public** in GitHub Packages."
+          } >> "$GITHUB_STEP_SUMMARY"

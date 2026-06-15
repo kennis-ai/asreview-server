@@ -26,7 +26,12 @@ on:
       - .github/workflows/build.yml
 
 env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/asreview-server
+  # Package name is asreview-lab (the repo is asreview-server). The original
+  # asreview-server package name was burned: it was first created — and thus
+  # owned — by the private infrastructure repo, so this public repo's token gets
+  # `permission_denied: write_package` on it even after deletion (GitHub reserves
+  # a deleted container name to its original owner). A fresh name sidesteps it.
+  IMAGE: ghcr.io/${{ github.repository_owner }}/asreview-lab
   ASREVIEW_VERSION: ${{ github.event.inputs.version || '2.1.1' }}
 
 jobs:

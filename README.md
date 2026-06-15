@@ -3,7 +3,7 @@
 Public, reproducible build of [ASReview LAB](https://github.com/asreview/asreview)
 packaged as a container image for the **kennis-pve** Kubernetes cluster.
 
-Published as `ghcr.io/kennis-ai/asreview-server:<version>`.
+Published as `ghcr.io/kennis-ai/asreview-lab:<version>`.
 
 ## Why this repo exists
 
@@ -42,7 +42,7 @@ gh workflow run build.yml -f version=2.1.1
 gh run watch
 
 # Local (amd64; emulated + slow on Apple Silicon):
-docker build -t ghcr.io/kennis-ai/asreview-server:2.1.1 .
+docker build -t ghcr.io/kennis-ai/asreview-lab:2.1.1 .
 ```
 
 ## Runtime
